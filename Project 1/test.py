@@ -1,32 +1,3 @@
-"""
-Password Strength Checker  --  v2
-DecodeLabs Industrial Training Kit -- Project 1 (Defensive Logic Track)
-
-This version closes the gaps flagged against the Project 1 brief:
-
-  1. Mandatory Patterns   (p.7)  -> [A-Z], [0-9], [symbol] are now HARD
-                                    requirements, not a soft score.
-  2. Unicode Curveball    (p.7)  -> symbol/entropy detection uses
-                                    unicodedata categories, not
-                                    string.punctuation (ASCII-only), so
-                                    the search space can reach the
-                                    143,000+ Unicode code point range.
-  3. Data in RAM Trap     (p.10) -> password is handled as a mutable
-                                    bytearray and explicitly zeroed
-                                    ("shredded") after use, instead of
-                                    living on as an immutable str.
-  4. Timing Attacks       (p.11) -> leaked-password lookup uses
-                                    hmac.compare_digest in a fixed,
-                                    no-short-circuit loop instead of a
-                                    fast-exit `in` / set lookup.
-  5. Gatekeeper Rule      (p.12) -> once a password clears validation,
-                                    it is hashed with Argon2id before
-                                    anything else touches it.
-                                    "You cannot hash what is weak."
-
-Install dependency once:  pip install argon2-cffi --break-system-packages
-"""
-
 import hmac
 import math
 import unicodedata
@@ -34,45 +5,38 @@ import unicodedata
 from argon2 import PasswordHasher
 from argon2.exceptions import HashingError
 
-# --------------------------------------------------------------------------
 # Config
-# --------------------------------------------------------------------------
 MIN_LENGTH = 8
 STRONG_LENGTH = 12
 
 # Sample leaked-password corpus (illustrative -- a real system would use a
 # much larger breach corpus, e.g. a k-anonymity lookup against HIBP).
 COMMON_LEAKED_PASSWORDS = [
-    "123456", "123456789", "password", "qwerty", "abc123",
-    "111111", "letmein", "iloveyou", "admin", "welcome",
-    "monkey", "password1", "12345678", "qwerty123",
+    "123456",
+    "123456789",
+    "password",
+    "qwerty",
+    "abc123",
+    "111111",
+    "letmein",
+    "iloveyou",
+    "admin",
+    "welcome",
+    "monkey",
+    "password1",
+    "12345678",
+    "qwerty123",
 ]
 
 ph = PasswordHasher()  # Argon2id by default in argon2-cffi
 
 
-# --------------------------------------------------------------------------
 # 2. Unicode-aware character classification (fixes "Unicode Curveball")
-# --------------------------------------------------------------------------
 def char_pool_contribution(password: str):
-    """
-    Inspect the password's actual character classes and return the size
-    of the search-space "pool" an attacker would have to brute-force,
-    using Unicode categories rather than ASCII-only assumptions.
 
-    Pools (per the p.7 diagram):
-      lowercase ascii : 26
-      uppercase ascii : 26
-      digits          : 10
-      ascii symbols   : 33
-      any codepoint outside the above (accents, emoji, CJK, etc.):
-                        treated as drawing from the wider Unicode
-                        symbol/letter space (~143,000+ assigned code
-                        points), which is what actually breaks a
-                        brute-force estimate that only assumes 95
-                        printable ASCII characters.
-    """
-    has_lower = has_upper = has_digit = has_ascii_symbol = has_unicode_symbol = has_unicode_ext = False
+    has_lower = has_upper = has_digit = has_ascii_symbol = has_unicode_symbol = (
+        has_unicode_ext
+    ) = False
 
     for ch in password:
         codepoint = ord(ch)
@@ -122,9 +86,7 @@ def calculate_entropy_bits(password: str, pool_size: int) -> float:
     return len(password) * math.log2(pool_size)
 
 
-# --------------------------------------------------------------------------
 # 4. Constant-time leaked-password check (fixes "Timing Attacks")
-# --------------------------------------------------------------------------
 def is_leaked_constant_time(password: str, corpus) -> bool:
     """
     Check membership without giving an attacker a timing side-channel.
@@ -147,9 +109,7 @@ def is_leaked_constant_time(password: str, corpus) -> bool:
     return found
 
 
-# --------------------------------------------------------------------------
 # 3. Memory shredding helper (fixes "Data in RAM Trap")
-# --------------------------------------------------------------------------
 def shred(buffer: bytearray) -> None:
     """
     Overwrite a mutable byte buffer with zeros in place.
@@ -173,10 +133,8 @@ def shred(buffer: bytearray) -> None:
         buffer[i] = 0
 
 
-# --------------------------------------------------------------------------
 # 1. Strength classification with MANDATORY pattern enforcement
 #    (fixes "Mandatory Patterns" -- was a soft variety_score >= 3)
-# --------------------------------------------------------------------------
 def check_password_strength(password_buf: bytearray):
     """
     password_buf: a bytearray holding the UTF-8 encoded password.
@@ -185,7 +143,7 @@ def check_password_strength(password_buf: bytearray):
     password = password_buf.decode("utf-8")
     feedback = []
 
-    # --- Gatekeeper: length check first, fail fast ---
+    # Gatekeeper: length check first, fail fast
     if len(password) < MIN_LENGTH:
         return "Weak", [f"Too short -- must be at least {MIN_LENGTH} characters."], 0.0
 
@@ -193,11 +151,13 @@ def check_password_strength(password_buf: bytearray):
     if is_leaked_constant_time(password, COMMON_LEAKED_PASSWORDS):
         return "Weak", ["This password appears in common leaked-password lists."], 0.0
 
-    has_lower, has_upper, has_digit, has_symbol, pool_size = char_pool_contribution(password)
+    has_lower, has_upper, has_digit, has_symbol, pool_size = char_pool_contribution(
+        password
+    )
     entropy_bits = calculate_entropy_bits(password, pool_size)
 
-    # --- MANDATORY enforcement: [A-Z], [0-9], [symbol] are all required.
-    #     No amount of extra length substitutes for a missing category. ---
+    # MANDATORY enforcement: [A-Z], [0-9], [symbol] are all required.
+    # No amount of extra length substitutes for a missing category.
     missing = []
     if not has_upper:
         missing.append("an uppercase letter [A-Z]")
@@ -207,7 +167,9 @@ def check_password_strength(password_buf: bytearray):
         missing.append("a symbol")
 
     if missing:
-        feedback.append("Mandatory requirement not met -- add " + ", ".join(missing) + ".")
+        feedback.append(
+            "Mandatory requirement not met -- add " + ", ".join(missing) + "."
+        )
         return "Weak", feedback, entropy_bits
 
     if not has_lower:
@@ -234,9 +196,7 @@ def render_bar(strength: str) -> str:
     return bars.get(strength, "")
 
 
-# --------------------------------------------------------------------------
 # 5. Gatekeeper Rule: validate BEFORE hashing (fixes omission of Argon2id)
-# --------------------------------------------------------------------------
 def hash_if_valid(strength: str, password_buf: bytearray):
     """
     "You cannot hash what is weak. Filter entropy before Argon2id." (p.12)
@@ -286,7 +246,9 @@ def main():
         if argon2_hash:
             print(f"Argon2id hash (for storage): {argon2_hash}")
         else:
-            print("Rejected before hashing -- weak passwords are never hashed or stored.")
+            print(
+                "Rejected before hashing -- weak passwords are never hashed or stored."
+            )
 
         # Done with the plaintext -- shred the mutable buffer.
         shred(password_buf)
